@@ -58,23 +58,36 @@ def changelog(start_commit: str, out: Path) -> None:
     out.write_text(log + "\n")
 
 def package(name: str) -> None:
-    dst = ROOT.parent / name
-    if dst.exists():
-        run("rm","-rf",str(dst))
-    run("git","clone",".",str(dst), cwd=ROOT)
-    # prune
-    for p in [
-        "PAPI_FAQ.html","doc/DataRange.html","doc/PAPI-C.html","doc/README",
-        "src/buildbot_configure_with_components.sh","papi_procedures.py",
-        ".git",".github",".gitattributes"
+    """Stage a clean tree under ROOT/name and emit ROOT/{name}.tar.gz."""
+    stage = ROOT / name
+    if stage.exists():
+        run("rm", "-rf", str(stage))
+
+    # Clone working tree into a staging dir inside the repo root
+    run("git", "clone", ".", str(stage), cwd=ROOT)
+
+    # Prune unwanted files from the staging tree
+    for rel in [
+        "PAPI_FAQ.html",
+        "doc/DataRange.html",
+        "doc/PAPI-C.html",
+        "doc/README",
+        "src/buildbot_configure_with_components.sh",
+        "papi_procedures.py",
+        ".git",
+        ".github",
+        ".gitattributes",
     ]:
-        target = dst/p
-        if target.is_dir(): run("rm","-rf",str(target))
-        elif target.exists(): target.unlink()
-    # tar.gz
-    tar = ROOT.parent / f"{name}.tar"
-    run("tar","-cvf",str(tar), name, cwd=ROOT.parent)
-    run("gzip", str(tar), cwd=ROOT.parent)
+        target = stage / rel
+        if target.is_dir():
+            run("rm", "-rf", str(target))
+        elif target.exists():
+            target.unlink()
+
+    # Create tar.gz in the repo root so the workflow can find it
+    run("tar", "-cvf", f"{name}.tar", name, cwd=ROOT)
+    run("gzip", f"{name}.tar", cwd=ROOT)
+
 
 def main():
     ap = argparse.ArgumentParser()
