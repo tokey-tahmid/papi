@@ -1,14 +1,23 @@
 # scripts/release.py
 from __future__ import annotations
-import argparse, subprocess, sys
+import argparse, subprocess, sys, os
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
-def sh(*args: str, cwd: Path | None = None) -> str:
-    out = subprocess.check_output(list(args), cwd=cwd, text=True)
-    return out.strip()
+def sh(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
+    # Force UTF-8 output and tolerate legacy encodings
+    env2 = os.environ.copy()
+    env2.update({"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8"})
+    if env:
+        env2.update(env)
+    cp = subprocess.run(
+        list(args), cwd=cwd, env=env2,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+    )
+    return cp.stdout.decode("utf-8", errors="replace").strip()
+
 
 def run(*args: str, cwd: Path | None = None) -> None:
     subprocess.run(list(args), cwd=cwd, check=True)
@@ -40,9 +49,12 @@ def changelog(start_commit: str, out: Path) -> None:
     if start_commit == "LAST_TAG":
         last_tag = sh("git", "describe", "--tags", "--abbrev=0")
         start_commit = last_tag
-    log = sh("git","log","--no-merges","--date=short",
-             f"{start_commit}..HEAD",
-             "--pretty=format:* %ad %an — %s")
+    log = sh(
+        "git", "-c", "i18n.logOutputEncoding=UTF-8", "-c", "core.quotepath=false",
+        "log", "--no-merges", "--date=short",
+        f"{start_commit}..HEAD",
+        "--pretty=format:* %ad %an — %s"
+    )
     out.write_text(log + "\n")
 
 def package(name: str) -> None:
