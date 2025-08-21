@@ -1,4 +1,3 @@
-# .github/workflows/release.yml
 name: Release PAPI
 
 on:
@@ -8,11 +7,17 @@ on:
         description: "Version like 7.2.0.0"
         required: true
       start_commit:
-        description: "Starting commit (non-inclusive) for changelog"
+        description: "Starting commit (non-inclusive) for changelog (or 'LAST_TAG')"
+        required: true
+      tag_name:
+        description: "Tag to create on this commit when dispatching manually (e.g. papi-7-2-0-t)"
         required: true
   push:
     tags:
-      - "papi-*" # e.g., papi-7-2-0-t or papi-7-2-0
+      - "papi-*"
+
+permissions:
+  contents: write # needed to create releases & push tags (with GITHUB_TOKEN)
 
 jobs:
   release:
@@ -24,12 +29,29 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y doxygen graphviz autoconf
+          sudo apt-get install -y doxygen graphviz autoconf make tar gzip
+
+      # If manual dispatch, create the tag here so downstream steps can use it
+      - name: Create tag on workflow_dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag -a "${{ inputs.tag_name }}" -m "Release ${{ inputs.version }}"
+          git push origin "${{ inputs.tag_name }}"
+
+      - name: Compute TAG_NAME
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag_name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_name=${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Bump versions in repo files
         run: |
-          python3 scripts/release.py bump \
-            --version "${{ github.event.inputs.version || 'auto' }}"
+          python3 scripts/release.py bump --version "${{ inputs.version || 'auto' }}"
 
       - name: Build manpages
         run: |
@@ -39,19 +61,19 @@ jobs:
       - name: Generate changelog
         run: |
           python3 scripts/release.py changelog \
-            --from "${{ github.event.inputs.start_commit || 'LAST_TAG' }}" \
+            --from "${{ inputs.start_commit || 'LAST_TAG' }}" \
             --out CHANGELOG.md
 
       - name: Build tarball
         run: |
-          python3 scripts/release.py package --name "papi-${{ github.event.inputs.version }}"
+          python3 scripts/release.py package --name "papi-${{ inputs.version }}"
           sha256sum *.tar.gz > SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: "PAPI ${{ github.event.inputs.version || github.ref_name }}"
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "PAPI ${{ inputs.version || steps.tag.outputs.tag_name }}"
           body_path: CHANGELOG.md
           files: |
             *.tar.gz
