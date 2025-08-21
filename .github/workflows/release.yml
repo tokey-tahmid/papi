@@ -69,15 +69,41 @@ jobs:
           python3 scripts/release.py package --name "papi-${{ inputs.version }}"
           sha256sum *.tar.gz > SHA256SUMS
 
+      - name: Trim release notes to GitHub limit
+        run: |
+          python3 - << 'PY'
+          import shutil
+          LIMIT = 120_000  # a little headroom under 125k
+          src = 'CHANGELOG.md'
+          short = 'CHANGELOG.short.md'
+          full = 'CHANGELOG_full.md'
+
+          with open(src, 'r', encoding='utf-8', errors='replace') as f:
+              s = f.read()
+
+          # Always attach the full changelog
+          shutil.copyfile(src, full)
+
+          if len(s) <= LIMIT:
+              shutil.copyfile(src, short)
+          else:
+              head = s[:LIMIT - 2000]
+              head = head.rsplit('\n', 1)[0]  # avoid cutting a line in the middle
+              suffix = "\n\n*… truncated to fit GitHub’s body limit. See attached `CHANGELOG_full.md` for the complete log.*\n"
+              with open(short, 'w', encoding='utf-8') as g:
+                  g.write(head + suffix)
+          PY
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag_name }}
           name: "PAPI ${{ inputs.version || steps.tag.outputs.tag_name }}"
-          body_path: CHANGELOG.md
+          body_path: CHANGELOG.short.md
           files: |
             *.tar.gz
             SHA256SUMS
+            CHANGELOG_full.md
 
       # Optional: Deploy docs to the server (set SSH secrets in repo settings)
       # - name: Deploy docs
