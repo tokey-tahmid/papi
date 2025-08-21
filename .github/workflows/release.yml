@@ -1,0 +1,68 @@
+# .github/workflows/release.yml
+name: Release PAPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version like 7.2.0.0"
+        required: true
+      start_commit:
+        description: "Starting commit (non-inclusive) for changelog"
+        required: true
+  push:
+    tags:
+      - "papi-*" # e.g., papi-7-2-0-t or papi-7-2-0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz autoconf
+
+      - name: Bump versions in repo files
+        run: |
+          python3 scripts/release.py bump \
+            --version "${{ github.event.inputs.version || 'auto' }}"
+
+      - name: Build manpages
+        run: |
+          make -C doc
+          make -C doc install
+
+      - name: Generate changelog
+        run: |
+          python3 scripts/release.py changelog \
+            --from "${{ github.event.inputs.start_commit || 'LAST_TAG' }}" \
+            --out CHANGELOG.md
+
+      - name: Build tarball
+        run: |
+          python3 scripts/release.py package --name "papi-${{ github.event.inputs.version }}"
+          sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "PAPI ${{ github.event.inputs.version || github.ref_name }}"
+          body_path: CHANGELOG.md
+          files: |
+            *.tar.gz
+            SHA256SUMS
+
+      # Optional: Deploy docs to the server (set SSH secrets in repo settings)
+      # - name: Deploy docs
+      #   uses: appleboy/scp-action@v0.1.7
+      #   with:
+      #     host: ${{ secrets.DOCS_HOST }}
+      #     username: ${{ secrets.DOCS_USER }}
+      #     key: ${{ secrets.DOCS_SSH_KEY }}
+      #     source: "doc/html/*"
+      #     target: "/path/to/websites/icl.utk.edu/projectsdev/papi/docs"
