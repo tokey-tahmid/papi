@@ -54,22 +54,13 @@ jobs:
             --from "${{ inputs.start_commit }}" \
             --out CHANGELOG.md
 
-      - name: Commit changes to a release branch
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git checkout -b "release/prepare-${{ inputs.version }}"
-          git add papi.spec doc/Doxyfile-common src/papi.h src/configure.in src/Makefile.in
-          [ -f src/configure ] && git add src/configure || true
-          git add man/man1 man/man3
-          git add CHANGELOG.md
-          git commit -m "release: prepare ${{ inputs.version }} (bump, configure, manpages, changelog)"
-
       - name: Open PR
         uses: peter-evans/create-pull-request@v6
         with:
-          branch: "release/prepare-${{ inputs.version }}"
-          title: "(release): prepare ${{ inputs.version }}"
+          base: ${{ inputs.base_branch }} # PR base (e.g., master)
+          branch: release/prepare-${{ inputs.version }} # PR head (new branch)
+          title: "release: prepare ${{ inputs.version }}"
+          commit-message: "release: prepare ${{ inputs.version }} (bump, configure, manpages, changelog)"
           body: |
             This PR prepares the ${{ inputs.version }} release:
             - Version bump in spec/headers/config
