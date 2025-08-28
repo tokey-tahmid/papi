@@ -1,0 +1,81 @@
+name: Prepare Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version X.Y.Z.N (e.g., 7.2.0.0)"
+        required: true
+      start_commit:
+        description: "Starting commit (non-inclusive) or LAST_TAG"
+        required: true
+      base_branch:
+        description: "Target branch for the PR"
+        required: false
+        default: "master"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch }}
+          fetch-depth: 0
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz autoconf make tar gzip
+
+      - name: Bump versions
+        run: |
+          python3 scripts/release.py bump --version "${{ inputs.version }}"
+
+      - name: Regenerate configure
+        run: |
+          (cd src && autoconf configure.in > configure)
+
+      - name: Build manpages
+        run: |
+          make -C doc
+          make -C doc install
+          # Clean odd doxygen artifacts if any
+          find man/man1 -maxdepth 1 -type f -name '_home_*' -delete || true
+          find man/man3 -maxdepth 1 -type f -name '_home_*' -delete || true
+
+      - name: Generate changelog
+        run: |
+          python3 scripts/release.py changelog \
+            --from "${{ inputs.start_commit }}" \
+            --out CHANGELOG.md
+
+      - name: Commit changes to a release branch
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout -b "release/prepare-${{ inputs.version }}"
+          git add papi.spec doc/Doxyfile-common src/papi.h src/configure.in src/Makefile.in
+          [ -f src/configure ] && git add src/configure || true
+          git add man/man1 man/man3
+          git add CHANGELOG.md
+          git commit -m "release: prepare ${{ inputs.version }} (bump, configure, manpages, changelog)"
+
+      - name: Open PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: "release/prepare-${{ inputs.version }}"
+          title: "(release): prepare ${{ inputs.version }}"
+          body: |
+            This PR prepares the ${{ inputs.version }} release:
+            - Version bump in spec/headers/config
+            - Regenerated `configure`
+            - Rebuilt manpages
+            - Generated `CHANGELOG.md` since `${{ inputs.start_commit }}`
+            After this PR is approved and merged into `${{ inputs.base_branch }}`, the **Publish Release** workflow will tag and publish the release.
+          labels: release
+          draft: false

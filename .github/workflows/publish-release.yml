@@ -1,0 +1,96 @@
+name: Publish Release
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "papi.spec"
+      - "doc/Doxyfile-common"
+      - "src/papi.h"
+      - "src/configure.in"
+      - "src/Makefile.in"
+  workflow_dispatch:
+    inputs:
+      tag_suffix:
+        description: "Optional tag suffix (default: -t)"
+        required: false
+        default: "-t"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Determine version and tag
+        id: ver
+        run: |
+          ver=$(grep -E '^Version:' papi.spec | awk '{print $2}')
+          echo "version=$ver" >> $GITHUB_OUTPUT
+          # Use -t by default; override only for manual dispatch
+          suffix="${{ github.event_name == 'workflow_dispatch' && inputs.tag_suffix || '-t' }}"
+          tag="papi-${ver//./-}${suffix}"
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz autoconf make tar gzip
+
+      - name: Build manpages (from merged sources)
+        run: |
+          make -C doc
+          make -C doc install
+          find man/man1 -maxdepth 1 -type f -name '_home_*' -delete || true
+          find man/man3 -maxdepth 1 -type f -name '_home_*' -delete || true
+
+      - name: Generate changelog since last tag
+        run: |
+          last=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$last" ]; then from=$(git rev-list --max-parents=0 HEAD | tail -1); else from=$last; fi
+          python3 scripts/release.py changelog --from "$from" --out CHANGELOG.md
+
+      - name: Create annotated tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.version }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Build tarball
+        run: |
+          python3 scripts/release.py package --name "papi-${{ steps.ver.outputs.version }}"
+          sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Trim release notes to GitHub limit
+        run: |
+          python3 - << 'PY'
+          import shutil
+          LIMIT = 120_000
+          src = 'CHANGELOG.md'
+          short = 'CHANGELOG.short.md'
+          full = 'CHANGELOG_full.md'
+          with open(src, 'r', encoding='utf-8', errors='replace') as f: s = f.read()
+          shutil.copyfile(src, full)
+          if len(s) <= LIMIT:
+              shutil.copyfile(src, short)
+          else:
+              head = s[:LIMIT - 2000].rsplit('\n', 1)[0]
+              with open(short, 'w', encoding='utf-8') as g:
+                  g.write(head + "\n\n*… truncated; see attached `CHANGELOG_full.md`.*\n")
+          PY
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "PAPI ${{ steps.ver.outputs.version }}"
+          body_path: CHANGELOG.short.md
+          files: |
+            *.tar.gz
+            SHA256SUMS
+            CHANGELOG_full.md
